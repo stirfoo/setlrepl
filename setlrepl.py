@@ -83,12 +83,18 @@ lineCache = []
 # intrinsic doc URL
 docURL = 'http://www.setl.org/setl/doc/setl-lib.html'
 
+mainPrompt = 'setl> '
+moarPrompt = '----> '
+
 class SETLError(Exception):
     pass
 
-def runSETL(instr):
+class DelimiterError(Exception):
+    pass
+
+def runSETL(code):
     try:
-        toSend = "\n".join(lineCache) + '\n' + instr
+        toSend = "\n".join(lineCache) + '\n' + code
         setl = Popen(['setl', toSend], stdout=PIPE, stderr=PIPE)
     except OSError:
         sys.stderr.write("failed to start setl")
@@ -119,28 +125,105 @@ def handleCommand(cmd):
     elif cmd.startswith('!help'):
         showHelp()
 
-def preSETL(instr):
-    # whitespace and/or semi colons
-    if re.match("\s*(;|\s)*\s*$", instr):
-        return
-    # !command
-    if instr.startswith('!'):
-        handleCommand(instr)
-        return
-    # view doc, exp!
-    elif len(instr) > 1 and instr.endswith('!'):
-        webbrowser.open(docURL + '#' + instr[:-1])
-        return
-    # add trailing ;
-    if not instr.endswith(';'):
-        instr += ';'
-    return instr
+def checkDelimiters(code):
+    """Check for delimiter pairs [], {}, ().
 
-def postSETL(instr):
+    Strings cannot span multiple lines.
+
+    If all pairs match return True.
+    If a closing delimiter is missing return False. This will tell the repl
+    to get another line of code before evaluating.
+    
+    Raise DelimiterError on mismatch.
+    """
+    pairs = {'{': '}', '(': ')', '[': ']'}
+    stack = []
+    for c in code:
+        if c in pairs.keys():
+            stack.append(c)
+        elif c in pairs.values():
+            if stack and pairs[stack[-1]] == c:
+                stack.pop()
+            else:
+                raise DelimiterError, "mismatched " + c
+    return stack == []
+
+def preSETL(code):
+    # white space and/or semi colons
+    if re.match("\s*(;|\s)*\s*$", code):
+        return (True, '')
+    # !command
+    if code.startswith('!'):
+        handleCommand(code)
+        return (True, '')
+    # view doc, exp!
+    elif len(code) > 1 and code.endswith('!'):
+        webbrowser.open(docURL + '#' + code[:-1])
+        return (True, '')
+    inputComplete = checkDelimiters(code)
+    if inputComplete:
+        if not code.endswith(';'):
+            code += ';'
+    return (inputComplete, code)
+
+def postSETL(code):
     # don't cache print statements
-    if re.match(r'print\s*\(?', instr):
+    if re.match(r'print\s*\(?', code):
         return
-    lineCache.append(instr)
+    lineCache.append(code)
+
+def repl():
+    """Read Eval Print Loop
+
+    1. Read a line
+    2. Check for valid complete input
+       a. ignore empty lines or empty statements (;)
+       b. handle !commands or docs!
+       c. check delimiters
+    
+    """
+    prompt = mainPrompt
+    retry = False
+    savedError = None
+    code = ''
+    while True:
+        try:
+            if not retry:
+                inLine = raw_input(prompt)
+                inputComplete, code = preSETL(code + inLine.strip())
+                if not inputComplete:
+                    prompt = moarPrompt
+                    continue
+                else:
+                    prompt = mainPrompt
+                if not code:
+                    continue
+            try:
+                result = runSETL(code)
+            except SETLError, e:
+                if not retry:
+                    # last code failed, retry wrapped in print()
+                    savedError = e
+                    code = 'print(' + code[:-1] + ');'
+                    retry = True
+                else:
+                    # last code failed wrapped in print()
+                    print savedError
+                    code = ''
+                    retry = False
+            # code evaluated Ok
+            else:
+                sys.stdout.write(result)
+                postSETL(code)
+                code = ''
+                retry = False
+        # extra ] } ) found
+        except DelimiterError, e:
+            print e
+            code = ''
+            retry = False
+        except EOFError, e:
+            sys.exit(0)
 
 if __name__ == '__main__':
     try:
@@ -153,34 +236,4 @@ if __name__ == '__main__':
     print "setlrepl using", whichSETL, "--version"
     print(check_output(['setl', '--version']).strip())
     print
-    retry = True
-    savedError = None
-    instr = None
-    while True:
-        try:
-            if not instr:
-                instr = raw_input("setl> ")
-                instr = preSETL(instr.strip())
-                if not instr:
-                    continue
-            try:
-                result = runSETL(instr)
-            except OSError:
-                retry = True
-                instr = None
-            except SETLError, e:
-                if retry:
-                    savedError = e
-                    instr = 'print(' + instr[:-1] + ');'
-                    retry = False
-                else:
-                    print savedError
-                    instr = None
-                    retry = True
-            else:
-                sys.stdout.write(result)
-                postSETL(instr)
-                instr = None
-                retry = True
-        except EOFError, e:
-            sys.exit(0)
+    repl()
