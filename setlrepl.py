@@ -73,7 +73,7 @@ Wednesday, April 10 2013
 import sys
 import re
 import webbrowser
-from pprint import pprint
+import pprint
 from subprocess import (Popen, call, PIPE, STDOUT, check_output,
                         CalledProcessError)
 
@@ -107,7 +107,14 @@ def runSETL(code):
 
 def showHelp():
     print """
-!cache -- print contents of lineCache
+!cache
+!cache Index -- print contents of lineCache as:
+                0 statement
+                1 statement
+                ...
+                n-1 statement
+                If Index is supplied re-evaluated that statement and move it
+                to the end of cache.
 !quit -- exit
 !help -- this
 
@@ -118,12 +125,30 @@ Try rlwrap ./setlrepl.py to get command line history and [] {} () matching.
 """
 
 def handleCommand(cmd):
-    if cmd.startswith('!cache'):
-        pprint(lineCache)
+    mo = re.match(r'!cache(\s+(?P<idx>\d+))?$', cmd)
+    if mo:
+        idx = mo.groupdict()['idx']
+        # re-evaluate code at idx
+        if idx:
+            try:
+                # move it to the end of the list
+                code = lineCache.pop(int(idx))
+                lineCache.append(code)
+                runSETL(code)
+            except IndexError:
+                sys.stderr.write('{} out of bounds'.format(idx))
+            except SETLError, e:
+                sys.stderr.write(e)
+        # print numbered cache
+        else:
+            for i, x in enumerate(lineCache):
+                print "{:4d}  {}".format(i, x)
     elif cmd.startswith('!quit'):
         raise EOFError
     elif cmd.startswith('!help'):
         showHelp()
+    else:
+        sys.stderr.write("Unknown command: {}\n".format(cmd))
 
 def checkDelimiters(code):
     """Check for delimiter pairs [], {}, ().
