@@ -20,22 +20,24 @@ The cache is initially empty:
 setl> !cache
 []
 
-The statement is evaluated and added to the cache. A trailing ; is optional.
-The repl will add one if needed.
+The following statement is evaluated and added to the cache. A trailing ; is
+optional. The repl will add one if needed.
 
 setl> x := 1
 setl> !cache
 ['x := 1;']
 
-Ditto, but this time setl evaluates both statements in order.
+Ditto for the following statement, but this time setl evaluates the previous
+statement and this one, in order.
 
 setl> y := 2
 setl> !cache
 ['x := 1;', 'y := 2']
 
-The following is an expression that setl will barf on. Its wrapped in a
-print() statement, and re evaluated (after the cache is evaluated). But,
-because its final form was a print() statement, it's not added to the cache.
+The following is an expression that setl will barf on. This will raise
+SETLError. The repl catches it, wraps the expression in a print statement and
+sends it (after lineCache) back to setl. Because its final form was a
+print() statement, it's not added to the cache.
 
 setl> x + y
 3
@@ -93,6 +95,10 @@ class DelimiterError(Exception):
     pass
 
 def runSETL(code):
+    """Run setl with code as its only argument
+
+    Return setl's output as a string or raise SETLError.
+    """
     try:
         toSend = "\n".join(lineCache) + '\n' + code
         setl = Popen(['setl', toSend], stdout=PIPE, stderr=PIPE)
@@ -106,6 +112,10 @@ def runSETL(code):
     return out
 
 def showHelp():
+    """Write help to stdout
+
+    Return None
+    """
     print """
 !cache
 !cache Index -- print contents of lineCache as:
@@ -125,6 +135,10 @@ Try rlwrap ./setlrepl.py to get command line history and [] {} () matching.
 """
 
 def handleCommand(cmd):
+    """Perform an action based on the given cmd
+
+    Return None
+    """
     mo = re.match(r'!cache(\s+(?P<idx>\d+))?$', cmd)
     if mo:
         idx = mo.groupdict()['idx']
@@ -135,8 +149,10 @@ def handleCommand(cmd):
                 code = lineCache.pop(int(idx))
                 lineCache.append(code)
                 runSETL(code)
+            # Catch it here because the main loop except clause logic is
+            # different.
             except IndexError:
-                sys.stderr.write('{} out of bounds'.format(idx))
+                sys.stderr.write('{} out of bounds\n'.format(idx))
             except SETLError, e:
                 sys.stderr.write(e)
         # print numbered cache
@@ -174,7 +190,9 @@ def checkDelimiters(code):
     return stack == []
 
 def preSETL(code):
-    # white space and/or semi colons
+    """Preprocess code before sending to setl
+    """
+    # any combination of whitespace and/or semicolons
     if re.match("\s*(;|\s)*\s*$", code):
         return (True, '')
     # !command
@@ -192,20 +210,14 @@ def preSETL(code):
     return (inputComplete, code)
 
 def postSETL(code):
-    # don't cache print statements
+    """Add code to lineCache unless it's a print statement
+    """
     if re.match(r'print\s*\(?', code):
         return
     lineCache.append(code)
 
 def repl():
     """Read Eval Print Loop
-
-    1. Read a line
-    2. Check for valid complete input
-       a. ignore empty lines or empty statements (;)
-       b. handle !commands or docs!
-       c. check delimiters
-    
     """
     prompt = mainPrompt
     retry = False
